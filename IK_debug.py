@@ -2,14 +2,15 @@ from sympy import *
 from time import time
 from mpmath import radians
 import tf
-
+import numpy as np
+ 
 '''
 Format of test case is [ [[EE position],[EE orientation as quaternions]],[WC location],[joint angles]]
 You can generate additional test cases by setting up your kuka project and running `$ roslaunch kuka_arm forward_kinematics.launch`
 From here you can adjust the joint angles to find thetas, use the gripper to extract positions and orientation (in quaternion xyzw) and lastly use link 5
 to find the position of the wrist center. These newly generated test cases can be added to the test_cases dictionary.
 '''
-
+ 
 test_cases = {1:[[[2.16135,-1.42635,1.55109],
                   [0.708611,0.186356,-0.157931,0.661967]],
                   [1.89451,-1.44302,1.69366],
@@ -24,8 +25,8 @@ test_cases = {1:[[[2.16135,-1.42635,1.55109],
                   [-2.99,-0.12,0.94,4.06,1.29,-4.12]],
               4:[],
               5:[]}
-
-
+ 
+ 
 def test_code(test_case):
     ## Set up code
     ## Do not modify!
@@ -41,56 +42,212 @@ def test_code(test_case):
             self.y = EE_ori[1]
             self.z = EE_ori[2]
             self.w = EE_ori[3]
-
+ 
     position = Position(test_case[0][0])
     orientation = Orientation(test_case[0][1])
-
+ 
     class Combine:
         def __init__(self,position,orientation):
             self.position = position
             self.orientation = orientation
-
+ 
     comb = Combine(position,orientation)
-
+ 
     class Pose:
         def __init__(self,comb):
             self.poses = [comb]
-
+ 
     req = Pose(comb)
     start_time = time()
-    
+   
     ########################################################################################
-    ## 
-
+    ##
+ 
     ## Insert IK code here!
-    
-    theta1 = 0
-    theta2 = 0
-    theta3 = 0
-    theta4 = 0
-    theta5 = 0
-    theta6 = 0
-
-    ## 
+    # Define DH param symbols
+    d1, d2, d3, d4, d5, d6, d7 = symbols('d1:8') # link_offset_i
+    a0, a1, a2, a3, a4, a5, a6 = symbols('a0:7') # link_length_(i-1)
+    alpha0, alpha1, alpha2, alpha3, alpha4, alpha5, alpha6 = symbols('alpha0:7') # twist_angle_(i-1)
+    q1, q2, q3, q4, q5, q6, q7 = symbols('q1:8') # theta_i
+ 
+    # Modified DH params
+    s = {alpha0:     0,   a0:      0,   d1:  0.75,
+         alpha1: -pi/2,   a1:   0.35,   d2:     0,   q2: q2-pi/2,
+         alpha2:     0,   a2:   1.25,   d3:     0,
+         alpha3: -pi/2,   a3: -0.054,   d4:   1.5,
+         alpha4:  pi/2,   a4:      0,   d5:     0,
+         alpha5: -pi/2,   a5:      0,   d6:     0,
+         alpha6:     0,   a6:      0,   d7: 0.303,   q7:       0}
+ 
+    # Create individual transformation matrices
+    T0_1 = Transformation_Matrix(q1, alpha0, a0, d1)
+    T0_1 = T0_1.subs(s)
+ 
+    T1_2 = Transformation_Matrix(q2, alpha1, a1, d2)
+    T1_2 = T1_2.subs(s)
+ 
+    T2_3 = Transformation_Matrix(q3, alpha2, a2, d3)
+    T2_3 = T2_3.subs(s)
+   
+    T3_4 = Transformation_Matrix(q4, alpha3, a3, d4)
+    T3_4 = T3_4.subs(s)
+   
+    T4_5 = Transformation_Matrix(q5, alpha4, a4, d5)
+    T4_5 = T4_5.subs(s)
+   
+    T5_6 = Transformation_Matrix(q6, alpha5, a5, d6)
+    T5_6 = T5_6.subs(s)
+   
+    T6_7 = Transformation_Matrix(q7, alpha6, a6, d7)
+    T6_7 = T6_7.subs(s)
+   
+    #Composition of Homogeneous Transform
+    T0_7 = T0_1 * T1_2 * T2_3 * T3_4 * T4_5 * T5_6 * T6_7
+ 
+    # Extract end-effector position and orientation from request
+        # px,py,pz = end-effector position
+        # roll, pitch, yaw = end-effector orientation
+    px = req.poses[x].position.x
+    py = req.poses[x].position.y
+    pz = req.poses[x].position.z
+ 
+    (roll, pitch, yaw) = tf.transformations.euler_from_quaternion(
+            [req.poses[x].orientation.x, req.poses[x].orientation.y,
+             req.poses[x].orientation.z, req.poses[x].orientation.w])
+ 
+    # Intrinsic rotation correction for end-effector transformation matrix
+    R_z_intrinsic = Matrix([[    cos(pi),    -sin(pi),               0],
+                            [    sin(pi),     cos(pi),               0],
+                            [          0,           0,               1]])
+    R_y_intrinsic = Matrix([[ cos(-pi/2),           0,      sin(-pi/2)],
+                            [          0,           1,               0],
+                            [-sin(-pi/2),           0,      cos(-pi/2)]])
+    ZY_intrinsic_rot = R_z_intrinsic * R_y_intrinsic
+ 
+    # Calculate transformation matrix from base link to end-effector
+    endeffector_trans = Matrix([[px],
+                                [py],
+                                [pz]])
+    R_z_extrinsic = Matrix([[   cos(yaw),   -sin(yaw),               0],
+                            [   sin(yaw),    cos(yaw),               0],
+                            [          0,           0,               1]])
+    R_y_extrinsic = Matrix([[ cos(pitch),           0,      sin(pitch)],
+                            [          0,           1,               0],
+                            [-sin(pitch),           0,      cos(pitch)]])
+    R_x_extrinsic = Matrix([[          1,           0,               0],
+                            [          0,   cos(roll),      -sin(roll)],
+                            [          0,   sin(roll),      cos(roll)]])
+    XYZ_extrinsic_rot = R_z_extrinsic * R_y_extrinsic * R_x_extrinsic
+    R0_6 = XYZ_extrinsic_rot * ZY_intrinsic_rot
+ 
+    # Find Wrist Center Location
+    d_7 = s[d7]
+    wx = px - (d_7 * R0_6[0, 2])
+    wy = py - (d_7 * R0_6[1, 2])
+    wz = pz - (d_7 * R0_6[2, 2])
+ 
+    # Finding theta 1-3
+    a_3 = s[a3]
+    d_4 = s[d4]
+    d_1 = s[d1]
+    a_1 = s[a1]
+    a_2 = s[a2]
+ 
+    theta1 = (atan2(wy, wx)).evalf()
+ 
+    s1 = sqrt(wx**2 + wy**2) - a_1
+    s2 = wz - d_1
+    s3 = sqrt(s2**2 + s1**2)
+    s4 = sqrt(a_3**2 + d_4**2)
+    beta1 = atan2(s2, s1)
+ 
+    D2 = (a_2**2 + s3**2 - s4**2) / (2 * a_2 * s3)
+    beta2 = atan2(sqrt(1 - D2**2), D2)
+ 
+    D3 = (a_2**2 + s4**2 - s3**2) / (2 * a_2 * s4)
+    beta3 = atan2(sqrt(1 - D3**2), D3)
+ 
+    beta4 = atan2(-a_3, d_4)
+ 
+    theta2 = ((pi / 2) - beta2 - beta1).evalf()
+    theta3 = ((pi / 2) - beta4 - beta3).evalf()
+ 
+    # Finding theta 4-6
+ 
+    R0_3 = simplify(T0_1 * T1_2 * T2_3)
+    R0_3 = R0_3.evalf(subs={q1: theta1, q2: theta2, q3: theta3})
+    R0_3 = R0_3[0:3, 0:3]
+    R0_3_inv = R0_3.inv("LU")
+    R3_6 = R0_3_inv * R0_6
+ 
+    r13 = R3_6[0, 2]
+    r33 = R3_6[2, 2]
+    r23 = R3_6[1, 2]
+    r21 = R3_6[1, 0]
+    r22 = R3_6[1, 1]
+    r12 = R3_6[0, 1]
+    r32 = R3_6[2, 1]
+ 
+    theta5 = (atan2(sqrt(r13**2 + r33**2), r23)).evalf()
+ 
+    if (sin(theta5) < 0):
+        print("BELOW!!!")
+        theta4 = (atan2(-r33, r13)).evalf()
+        theta6 = (atan2(r22, -r21)).evalf()
+    elif (theta5 == 0):
+        print("EQUAL!!!")
+        theta4 = 0
+        theta6 = (atan2(-r12, -r32)).evalf()
+    else:
+        print("ELSE!!!!!")
+        theta4 = (atan2(r33, -r13)).evalf()
+        theta6 = (atan2(-r22, r21)).evalf()
+       
+    print(theta4)
+     
+    while (theta4 > pi):
+        theta4 = theta4 - 2*pi
+    while (theta4 < -pi):
+        theta4 = 2*pi + theta4
+       
+    while (theta5 > pi):
+        theta5 = theta5 - 2*pi
+    while (theta5 < -pi):
+        theta5 = 2*pi + theta5
+       
+    while (theta6 > pi):
+        theta6 = theta6 - 2*pi
+    while (theta6 < -pi):
+        theta6 = 2*pi + theta6
+       
+    print(theta4)
+       
+    ##
     ########################################################################################
-    
+   
     ########################################################################################
     ## For additional debugging add your forward kinematics here. Use your previously calculated thetas
     ## as the input and output the position of your end effector as your_ee = [x,y,z]
-
+ 
     ## (OPTIONAL) YOUR CODE HERE!
-
+    ForwardKinematics = T0_7.evalf(subs={q1: theta1, q2: theta2, q3: theta3, q4: theta4, q5: theta5, q6: theta6})
+   
+    #End effector positions
+    ex = ForwardKinematics[0, 3]
+    ey = ForwardKinematics[1, 3]
+    ez = ForwardKinematics[2, 3]
+ 
     ## End your code input for forward kinematics here!
     ########################################################################################
-
+ 
     ## For error analysis please set the following variables of your WC location and EE location in the format of [x,y,z]
-    your_wc = [1,1,1] # <--- Load your calculated WC values in this array
-    your_ee = [1,1,1] # <--- Load your calculated end effector value from your forward kinematics
+    your_wc = [wx,wy,wz] # <--- Load your calculated WC values in this array
+    your_ee = [ex,ey,ez] # <--- Load your calculated end effector value from your forward kinematics
     ########################################################################################
-
+ 
     ## Error analysis
     print ("\nTotal run time to calculate joint angles from pose is %04.4f seconds" % (time()-start_time))
-
+ 
     # Find WC error
     if not(sum(your_wc)==3):
         wc_x_e = abs(your_wc[0]-test_case[1][0])
@@ -101,7 +258,7 @@ def test_code(test_case):
         print ("Wrist error for y position is: %04.8f" % wc_y_e)
         print ("Wrist error for z position is: %04.8f" % wc_z_e)
         print ("Overall wrist offset is: %04.8f units" % wc_offset)
-
+ 
     # Find theta errors
     t_1_e = abs(theta1-test_case[2][0])
     t_2_e = abs(theta2-test_case[2][1])
@@ -116,10 +273,10 @@ def test_code(test_case):
     print ("Theta 5 error is: %04.8f" % t_5_e)
     print ("Theta 6 error is: %04.8f" % t_6_e)
     print ("\n**These theta errors may not be a correct representation of your code, due to the fact \
-           \nthat the arm can have muliple positions. It is best to add your forward kinmeatics to \
-           \nconfirm whether your code is working or not**")
+          \nthat the arm can have muliple positions. It is best to add your forward kinmeatics to \
+          \nconfirm whether your code is working or not**")
     print (" ")
-
+ 
     # Find FK EE error
     if not(sum(your_ee)==3):
         ee_x_e = abs(your_ee[0]-test_case[0][0][0])
@@ -130,12 +287,17 @@ def test_code(test_case):
         print ("End effector error for y position is: %04.8f" % ee_y_e)
         print ("End effector error for z position is: %04.8f" % ee_z_e)
         print ("Overall end effector offset is: %04.8f units \n" % ee_offset)
-
-
-
-
+ 
+def Transformation_Matrix(q, alpha, a, d):
+    T = Matrix([[           cos(q),           -sin(q),           0,             a],
+                [sin(q)*cos(alpha), cos(q)*cos(alpha), -sin(alpha), -sin(alpha)*d],
+                [sin(q)*sin(alpha), cos(q)*sin(alpha),  cos(alpha),  cos(alpha)*d],
+                [                0,                 0,           0,             1]])
+    return(T)
+ 
+ 
 if __name__ == "__main__":
     # Change test case number for different scenarios
-    test_case_number = 1
-
+    test_case_number = 3
+ 
     test_code(test_cases[test_case_number])
