@@ -100,6 +100,10 @@ def test_code(test_case):
    
     T6_7 = Transformation_Matrix(q7, alpha6, a6, d7)
     T6_7 = T6_7.subs(s)
+    
+    # T3_6 is outputted symbolically to assist in thetas4-6 derivation
+    T3_6 = simplify(T3_4 * T4_5 * T5_6)
+    print (T3_6[0:3, 0:3])
    
     #Composition of Homogeneous Transform
     T0_7 = T0_1 * T1_2 * T2_3 * T3_4 * T4_5 * T5_6 * T6_7
@@ -189,38 +193,8 @@ def test_code(test_case):
     r32 = R3_6[2, 1]
  
     theta5 = (atan2(sqrt(r13**2 + r33**2), r23)).evalf()
- 
-    if (sin(theta5) < 0):
-        print("BELOW!!!")
-        theta4 = (atan2(-r33, r13)).evalf()
-        theta6 = (atan2(r22, -r21)).evalf()
-    elif (theta5 == 0):
-        print("EQUAL!!!")
-        theta4 = 0
-        theta6 = (atan2(-r12, -r32)).evalf()
-    else:
-        print("ELSE!!!!!")
-        theta4 = (atan2(r33, -r13)).evalf()
-        theta6 = (atan2(-r22, r21)).evalf()
-       
-    print(theta4)
-     
-    while (theta4 > pi):
-        theta4 = theta4 - 2*pi
-    while (theta4 < -pi):
-        theta4 = 2*pi + theta4
-       
-    while (theta5 > pi):
-        theta5 = theta5 - 2*pi
-    while (theta5 < -pi):
-        theta5 = 2*pi + theta5
-       
-    while (theta6 > pi):
-        theta6 = theta6 - 2*pi
-    while (theta6 < -pi):
-        theta6 = 2*pi + theta6
-       
-    print(theta4)
+    theta4 = (atan2(r33, -r13)).evalf()
+    theta6 = (atan2(-r22, r21)).evalf()
        
     ##
     ########################################################################################
