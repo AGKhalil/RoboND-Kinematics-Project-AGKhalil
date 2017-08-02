@@ -87,9 +87,6 @@ def handle_calculate_IK(req):
                     req.poses[x].orientation.z, req.poses[x].orientation.w])
 
 	    # Calculate transformation matrix from base link to end-effector
-	    endeffector_trans = Matrix([[px],
-		                        [py],
-		                        [pz]])
 	    R_z_extrinsic = Matrix([[   cos(yaw),   -sin(yaw),               0],
 		                    [   sin(yaw),    cos(yaw),               0],
 		                    [          0,           0,               1]])
